@@ -1,147 +1,116 @@
 # reporting.py
 """
-Generates a personalized, downloadable PDF report at the end of an
-ERAI assessment. Next-steps content adapts to user mode:
-    - "Student": co-program, capstone, campus clubs/events
-    - "Public":  further training (AI/tech), incubators, mentorship/funding
+EntreReady AI (ERAI) — Report generation.
+Builds a downloadable CSV report from the assessment results.
+Standard library + pandas only (pandas is already in requirements.txt).
 """
-from io import BytesIO
+
+import io
 from datetime import datetime
+from typing import Any, Dict, List
 
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import cm
-from reportlab.lib import colors
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem, HRFlowable
-)
+import pandas as pd
 
 
-# --- Next-steps content, keyed by mode ---------------------------------
-STUDENT_STEPS = [
-    "Join the Entrepreneurial Co-Program (co-op / co-curricular track) to gain "
-    "structured, mentored exposure to real venture building.",
-    "Enroll in the Capstone Project so you graduate with hands-on experience of "
-    "taking an idea from concept to a working prototype or pitch.",
-    "Join an entrepreneurship club or student organization at your institution "
-    "to build a peer network and accountability.",
-    "Attend guest-speaker sessions, hackathons, and business-plan competitions "
-    "to test ideas and meet potential co-founders and mentors.",
-    "Use your institution's career and innovation office to find internships "
-    "with startups in your area of interest.",
-]
-
-PUBLIC_STEPS = [
-    "Take your training further with focused upskilling — especially AI and "
-    "digital-tools courses that strengthen your venture's competitiveness.",
-    "Apply to a startup incubator or accelerator to access workspace, "
-    "structured programs, and investor networks.",
-    "Find a mentor through local entrepreneurship networks or online "
-    "communities to shorten your learning curve.",
-    "Explore seed funding, grants, and pitch competitions relevant to your "
-    "industry and region.",
-    "Validate your idea with a small pilot or MVP before committing "
-    "significant capital.",
-]
-
-
-def _steps_for(mode: str):
-    return STUDENT_STEPS if str(mode).strip().lower().startswith("student") else PUBLIC_STEPS
-
-
-def build_report_pdf(
-    mode: str,
-    readiness_score: float,
-    readiness_level: str,
-    dimension_scores: dict | None = None,
-    gaps: list[str] | None = None,
-    user_name: str = "",
+def build_csv_report(
+    responses_text: Dict[str, str],
+    responses_numeric: Dict[str, int],
+    results: Dict[str, Any],
+    dimensions: List[Dict[str, Any]],
 ) -> bytes:
     """
-    Returns the PDF as bytes, ready for st.download_button.
+    Build a UTF-8 CSV report of the assessment results.
 
-    dimension_scores: {"Motivation": 4.1, "Self-Efficacy": 3.4, ...}
-    gaps:             ["Business & Digital Readiness", ...]  (lowest dimensions)
+    Parameters
+    ----------
+    responses_text : dict
+        {question_id: selected Likert text} e.g. {"Q7": "Agree"}
+    responses_numeric : dict
+        {question_id: numeric score 1-5} e.g. {"Q7": 4}
+    results : dict
+        Output of scoring.calculate_results(). Expected keys:
+        - overall_score (float)
+        - readiness_level (str)
+        - dimension_scores (dict: dimension_id -> score)
+        - strengths (list of {"name": str, "score": float})
+        - gaps (list of {"name": str, "score": float})
+    dimensions : list of dict
+        The DIMENSIONS metadata, each {"id": str, "name": str, "weight": float, ...}
+
+    Returns
+    -------
+    bytes
+        UTF-8 encoded CSV, ready for st.download_button.
     """
-    buf = BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=A4,
-        leftMargin=2 * cm, rightMargin=2 * cm,
-        topMargin=1.6 * cm, bottomMargin=1.6 * cm,
+    buffer = io.StringIO()
+
+    # --- Section 1: Report header / metadata ---
+    buffer.write("EntreReady AI (ERAI) — Assessment Report\n")
+    buffer.write(f"Generated,{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    buffer.write("\n")
+
+    # --- Section 2: Overall result ---
+    buffer.write("Overall Result\n")
+    overall = pd.DataFrame(
+        {
+            "Metric": ["Overall Readiness Index", "Readiness Level"],
+            "Value": [
+                f"{results.get('overall_score', 0):.1f}",
+                results.get("readiness_level", "N/A"),
+            ],
+        }
     )
+    buffer.write(overall.to_csv(index=False))
+    buffer.write("\n")
 
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(
-        "ERAITitle", parent=styles["Title"], fontSize=20, spaceAfter=6,
-        textColor=colors.HexColor("#1f3b73"),
-    ))
-    styles.add(ParagraphStyle(
-        "ERAISub", parent=styles["Normal"], fontSize=10,
-        textColor=colors.HexColor("#555555"), spaceAfter=14,
-    ))
-    styles.add(ParagraphStyle(
-        "ERAIH2", parent=styles["Heading2"], fontSize=13,
-        textColor=colors.HexColor("#1f3b73"), spaceBefore=12, spaceAfter=4,
-    ))
-    body = styles["BodyText"]
+    # --- Section 3: Dimension scores ---
+    buffer.write("Dimension Scores\n")
+    # Map dimension id -> display name using the dimensions metadata
+    name_by_id = {d.get("id"): d.get("name", d.get("id")) for d in (dimensions or [])}
+    dim_scores = results.get("dimension_scores") or {}
+    dim_df = pd.DataFrame(
+        {
+            "Dimension": [name_by_id.get(k, k) for k in dim_scores.keys()],
+            "Score": [f"{v:.1f}" for v in dim_scores.values()],
+        }
+    )
+    buffer.write(dim_df.to_csv(index=False))
+    buffer.write("\n")
 
-    story = []
+    # --- Section 4: Strengths ---
+    buffer.write("Strengths\n")
+    strengths = results.get("strengths") or []
+    strengths_df = pd.DataFrame(
+        {
+            "Dimension": [s.get("name", "") for s in strengths],
+            "Score": [f"{s.get('score', 0):.1f}" for s in strengths],
+        }
+    )
+    buffer.write(strengths_df.to_csv(index=False))
+    buffer.write("\n")
 
-    # --- Header ---
-    story.append(Paragraph("ERAI Readiness Report", styles["ERAITitle"]))
-    who = f"Prepared for: {user_name}  |  " if user_name else ""
-    story.append(Paragraph(
-        f"{who}Mode: {mode}  |  "
-        f"Generated: {datetime.now().strftime('%d %b %Y, %H:%M')}",
-        styles["ERAISub"],
-    ))
-    story.append(HRFlowable(width="100%", color=colors.HexColor("#dddddd")))
-    story.append(Spacer(1, 10))
+    # --- Section 5: Development gaps ---
+    buffer.write("Development Gaps\n")
+    gaps = results.get("gaps") or []
+    gaps_df = pd.DataFrame(
+        {
+            "Dimension": [g.get("name", "") for g in gaps],
+            "Score": [f"{g.get('score', 0):.1f}" for g in gaps],
+        }
+    )
+    buffer.write(gaps_df.to_csv(index=False))
+    buffer.write("\n")
 
-    # --- Score summary ---
-    story.append(Paragraph("Your Readiness Result", styles["ERAIH2"]))
-    story.append(Paragraph(
-        f"<b>ERAI Readiness Index (ERI):</b> {readiness_score:.0f} / 100"
-        f" &nbsp;&nbsp; <b>Level:</b> {readiness_level}",
-        body,
-    ))
-    story.append(Spacer(1, 6))
+    # --- Section 6: Detailed responses ---
+    buffer.write("Detailed Responses\n")
+    qids = list(responses_text.keys()) if responses_text else []
+    responses_df = pd.DataFrame(
+        {
+            "Question ID": qids,
+            "Answer (Text)": [responses_text.get(q, "") for q in qids],
+            "Answer (Score)": [responses_numeric.get(q, "") for q in qids],
+        }
+    )
+    buffer.write(responses_df.to_csv(index=False))
 
-    # --- Dimension breakdown ---
-    if dimension_scores:
-        story.append(Paragraph("Dimension Breakdown", styles["ERAIH2"]))
-        items = [
-            ListItem(Paragraph(f"{k}: {v:.1f} / 5", body))
-            for k, v in dimension_scores.items()
-        ]
-        story.append(ListFlowable(items, bulletType="bullet"))
-        story.append(Spacer(1, 6))
-
-    # --- Development gaps ---
-    if gaps:
-        story.append(Paragraph("Development Gaps to Address", styles["ERAIH2"]))
-        story.append(ListFlowable(
-            [ListItem(Paragraph(g, body)) for g in gaps],
-            bulletType="bullet",
-        ))
-        story.append(Spacer(1, 6))
-
-    # --- Personalized next steps (mode-dependent) ---
-    heading = ("Recommended Next Steps for Students"
-               if _steps_for(mode) is STUDENT_STEPS
-               else "Recommended Next Steps")
-    story.append(Paragraph(heading, styles["ERAIH2"]))
-    story.append(ListFlowable(
-        [ListItem(Paragraph(s, body)) for s in _steps_for(mode)],
-        bulletType="1",  # numbered
-    ))
-
-    story.append(Spacer(1, 14))
-    story.append(HRFlowable(width="100%", color=colors.HexColor("#dddddd")))
-    story.append(Paragraph(
-        "Generated by ERAI — Explainable AI Decision Support for Entrepreneurial Readiness.",
-        styles["ERAISub"],
-    ))
-
-    doc.build(story)
-    return buf.getvalue()
+    return buffer.getvalue().encode("utf-8")
