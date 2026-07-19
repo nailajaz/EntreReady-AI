@@ -1,138 +1,64 @@
-{
-  "dimensions": [
-    {
-      "id": "motivation",
-      "name": "Entrepreneurial Motivation",
-      "short_name": "Motivation",
-      "description": "Commitment, intention, and willingness to pursue entrepreneurial activity.",
-      "weight": 0.18
-    },
-    {
-      "id": "self_efficacy",
-      "name": "Entrepreneurial Self-Efficacy",
-      "short_name": "Self-Efficacy",
-      "description": "Confidence in planning, decision-making, leadership, and problem-solving.",
-      "weight": 0.2
-    },
-    {
-      "id": "innovation",
-      "name": "Innovation & Opportunity Recognition",
-      "short_name": "Innovation",
-      "description": "Ability to identify needs, generate ideas, and test potential solutions.",
-      "weight": 0.18
-    },
-    {
-      "id": "resilience",
-      "name": "Risk Management & Resilience",
-      "short_name": "Resilience",
-      "description": "Capacity to manage uncertainty, setbacks, calculated risks, and change.",
-      "weight": 0.16
-    },
-    {
-      "id": "business_ai",
-      "name": "Business & AI Readiness",
-      "short_name": "Business & AI",
-      "description": "Business knowledge, data use, digital capability, and responsible AI use.",
-      "weight": 0.18
-    },
-    {
-      "id": "support",
-      "name": "Resources & Support",
-      "short_name": "Support",
-      "description": "Access to mentors, networks, training, funding information, and support systems.",
-      "weight": 0.1
-    }
-  ],
-  "questions": [
-    {
-      "id": "M1",
-      "dimension": "motivation",
-      "text": "Starting or developing a venture is an important career goal for me."
-    },
-    {
-      "id": "M2",
-      "dimension": "motivation",
-      "text": "I am willing to invest sustained effort in pursuing a business opportunity."
-    },
-    {
-      "id": "M3",
-      "dimension": "motivation",
-      "text": "I actively look for opportunities that could become viable ventures."
-    },
-    {
-      "id": "S1",
-      "dimension": "self_efficacy",
-      "text": "I am confident that I can evaluate whether a business idea is feasible."
-    },
-    {
-      "id": "S2",
-      "dimension": "self_efficacy",
-      "text": "I can make decisions when business information is incomplete."
-    },
-    {
-      "id": "S3",
-      "dimension": "self_efficacy",
-      "text": "I am confident that I can organize people and resources around a business goal."
-    },
-    {
-      "id": "I1",
-      "dimension": "innovation",
-      "text": "I can identify unmet customer or community needs."
-    },
-    {
-      "id": "I2",
-      "dimension": "innovation",
-      "text": "I frequently generate practical ideas for solving problems."
-    },
-    {
-      "id": "I3",
-      "dimension": "innovation",
-      "text": "I am willing to test and improve an idea using feedback."
-    },
-    {
-      "id": "R1",
-      "dimension": "resilience",
-      "text": "I can remain productive when outcomes are uncertain."
-    },
-    {
-      "id": "R2",
-      "dimension": "resilience",
-      "text": "I am willing to take calculated risks after reviewing available information."
-    },
-    {
-      "id": "R3",
-      "dimension": "resilience",
-      "text": "I recover and adapt after setbacks or disappointing results."
-    },
-    {
-      "id": "B1",
-      "dimension": "business_ai",
-      "text": "I understand the basic financial and operational requirements of starting a venture."
-    },
-    {
-      "id": "B2",
-      "dimension": "business_ai",
-      "text": "I can use data or digital tools to support business decisions."
-    },
-    {
-      "id": "B3",
-      "dimension": "business_ai",
-      "text": "I can use AI tools responsibly to improve business planning or problem-solving."
-    },
-    {
-      "id": "P1",
-      "dimension": "support",
-      "text": "I have access to people who can provide useful entrepreneurial guidance."
-    },
-    {
-      "id": "P2",
-      "dimension": "support",
-      "text": "I know where to find entrepreneurship training, funding information, or business support."
-    },
-    {
-      "id": "P3",
-      "dimension": "support",
-      "text": "My professional or personal network could support the development of a venture."
-    }
-  ]
+import numpy as np
+import streamlit as st
+
+# --- optional: load trained model if present, else use transparent weights ---
+try:
+    import joblib
+    _bundle = joblib.load("models/erai_model.joblib")
+    _model, _FEATURES = _bundle["model"], _bundle["features"]
+    _HAS_MODEL = True
+except Exception:
+    _model, _HAS_MODEL = None, False
+    _FEATURES = ["Q.9", "Q.10", "Q.12", "Q28", "Q29", "Q30"]
+
+st.set_page_config(page_title="EntreReady AI (ERAI)", page_icon="🚀", layout="wide")
+
+st.markdown("<h1>🚀 EntreReady AI (ERAI)</h1>", unsafe_allow_html=True)
+st.caption("Explainable AI Decision Support for Entrepreneurial Readiness")
+
+# Questions keyed by the SAME Qualtrics variable names
+QUESTIONS = {
+    "Q.9":  "How would you rate the quality of entrepreneurship education at your institution?",
+    "Q.10": "Did your education provide adequate resources to become an entrepreneur?",
+    "Q.12": "Is your education equipping you with essential entrepreneurial skills?",
+    "Q28":  "How important is Technology for entrepreneurship?",
+    "Q29":  "How important is AI for entrepreneurship?",
+    "Q30":  "How confident are you using Technology and AI in your venture?",
 }
+
+with st.form("erai"):
+    responses = {}
+    for var, text in QUESTIONS.items():
+        responses[var] = st.slider(f"{text}  ({var})", 1, 5, 3)
+    submitted = st.form_submit_button("Generate ERAI Assessment",
+                                      type="primary", use_container_width=True)
+
+if submitted:
+    x = np.array([[responses[f] for f in _FEATURES]], dtype=float)
+
+    if _HAS_MODEL:
+        proba = float(_model.predict_proba(x)[0, 1])
+        overall = round(proba * 100, 1)
+        conf = round(max(proba, 1 - proba) * 100, 1)
+        engine = "ML model (trained on Qualtrics data)"
+    else:
+        overall = round((x.mean() - 1) / 4 * 100, 1)   # transparent weighted fallback
+        conf = 100.0
+        engine = "Transparent weighted engine (Version 1)"
+
+    band = ("High Readiness" if overall >= 70
+            else "Developing Readiness" if overall >= 45
+            else "Emerging Readiness")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("ERAI Readiness Index", f"{overall}/100")
+    c2.metric("Readiness Level", band)
+    c3.metric("Confidence", f"{conf}%")
+    st.caption(f"Engine: {engine}")
+
+    st.subheader("Per-item scores")
+    for f in _FEATURES:
+        st.markdown(f"- **{f}** — {QUESTIONS[f]}: {responses[f]}/5")
+
+st.info("This tool indicates *current* entrepreneurial readiness — it does not "
+        "predict that a person will definitely become an entrepreneur.")
